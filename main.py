@@ -7,15 +7,15 @@ import uuid
 import base64
 from fastapi import Request
 
-
 app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["Retry-After"],
 )
 
 TOTAL_ORDERS = 54
