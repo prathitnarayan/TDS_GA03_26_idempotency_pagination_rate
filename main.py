@@ -5,6 +5,8 @@ from pydantic import BaseModel
 import time
 import uuid
 import base64
+from fastapi import Request
+
 
 app = FastAPI()
 
@@ -43,25 +45,28 @@ class OrderRequest(BaseModel):
 
 
 @app.post("/orders", status_code=201)
-def create_order(
-    order: OrderRequest,
-    response: Response,
+async def create_order(
+    request: Request,
     idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
 ):
     if not idempotency_key:
-        raise HTTPException(400, "Idempotency-Key header required")
+        raise HTTPException(status_code=400, detail="Missing Idempotency-Key")
 
     if idempotency_key in IDEMPOTENCY_STORE:
         return IDEMPOTENCY_STORE[idempotency_key]
 
-    created = {
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    order = {
         "id": str(uuid.uuid4()),
-        "item": order.item,
-        "amount": order.amount,
+        **body,
     }
 
-    IDEMPOTENCY_STORE[idempotency_key] = created
-    return created
+    IDEMPOTENCY_STORE[idempotency_key] = order
+    return order
 
 
 @app.get("/orders")
