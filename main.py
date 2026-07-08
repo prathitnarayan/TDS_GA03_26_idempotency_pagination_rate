@@ -1,166 +1,65 @@
+from collections import defaultdict
+
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from collections import defaultdict, deque
-import base64
-import time
-import uuid
 
 app = FastAPI()
-
-# ---------------- CORS ----------------
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=False,
-    allow_methods=["GET", "POST", "OPTIONS"],
-    allow_headers=[
-        "*",
-        "Idempotency-Key",
-        "X-Client-Id",
-        "Content-Type",
-    ],
-    expose_headers=["Retry-After"],
-    max_age=600,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
-# ---------------- Constants ----------------
+API_KEY = "ak_0oo7oz5ubfhwnono3d4uxn7i"
 
-TOTAL_ORDERS = 54
-RATE_LIMIT = 19
-WINDOW_SECONDS = 10
-
-# ---------------- Fixed Order Catalog ----------------
-
-ORDERS = [
-    {
-        "id": i,
-        "item": f"Item {i}",
-        "amount": float(i * 10),
-    }
-    for i in range(1, TOTAL_ORDERS + 1)
-]
-
-# ---------------- In-memory Stores ----------------
-
-idempotency_store = {}
-
-client_requests = defaultdict(deque)
-
-# ---------------- Rate Limiter ----------------
+# ---------------------------------------------------------------------------
+# EDIT THIS before deploying — put your logged-in email address here.
+# ---------------------------------------------------------------------------
+EMAIL = "25ds2000019@ds.study.iitm.ac.in"
 
 
-@app.middleware("http")
-async def rate_limit(request: Request, call_next):
-    client_id = request.headers.get("X-Client-Id")
+@app.post("/analytics")
+async def analytics(request: Request, x_api_key: str | None = Header(default=None)):
+    if x_api_key != API_KEY:
+        return JSONResponse(status_code=401, content={"detail": "Unauthorized"})
 
-    if client_id:
-        now = time.time()
-        bucket = client_requests[client_id]
+    body = await request.json()
+    events = body.get("events", [])
 
-        while bucket and bucket[0] <= now - WINDOW_SECONDS:
-            bucket.popleft()
+    total_events = len(events)
+    unique_users = set()
+    revenue = 0.0
+    per_user_positive = defaultdict(float)
 
-        if len(bucket) >= RATE_LIMIT:
-            retry_after = max(1, int(WINDOW_SECONDS - (now - bucket[0])))
+    for event in events:
+        user = event.get("user")
+        amount = event.get("amount", 0)
 
-            response = JSONResponse(
-                status_code=429,
-                content={"detail": "Too Many Requests"},
-            )
-
-            response.headers["Retry-After"] = str(retry_after)
-            return response
-
-        bucket.append(now)
-
-    return await call_next(request)
-
-# ---------------- Idempotent POST ----------------
-
-
-@app.post("/orders")
-async def create_order(
-    request: Request,
-    idempotency_key: str | None = Header(
-        default=None,
-        alias="Idempotency-Key",
-    ),
-):
-    if not idempotency_key:
-        raise HTTPException(
-            status_code=400,
-            detail="Missing Idempotency-Key",
-        )
-
-    # Existing request
-    if idempotency_key in idempotency_store:
-        return JSONResponse(
-            status_code=201,
-            content=idempotency_store[idempotency_key],
-        )
-
-    body = {}
-
-    try:
-        if request.headers.get("content-length"):
-            body = await request.json()
-    except Exception:
-        body = {}
-
-    order = {
-        "id": str(uuid.uuid4()),
-        **body,
-    }
-
-    idempotency_store[idempotency_key] = order
-
-    return JSONResponse(
-        status_code=201,
-        content=order,
-    )
-
-# ---------------- Cursor Pagination ----------------
-
-
-@app.get("/orders")
-def list_orders(
-    limit: int = 10,
-    cursor: str | None = None,
-):
-    start = 0
-
-    if cursor:
         try:
-            start = int(base64.b64decode(cursor).decode())
-        except Exception:
-            raise HTTPException(
-                status_code=400,
-                detail="Invalid cursor",
-            )
+            amount = float(amount)
+        except (TypeError, ValueError):
+            amount = 0.0
 
-    limit = max(1, min(limit, TOTAL_ORDERS))
+        if user is not None:
+            unique_users.add(user)
 
-    items = ORDERS[start:start + limit]
+        if amount > 0:
+            revenue += amount
+            if user is not None:
+                per_user_positive[user] += amount
 
-    next_cursor = None
-
-    if start + limit < TOTAL_ORDERS:
-        next_cursor = base64.b64encode(
-            str(start + limit).encode()
-        ).decode()
+    top_user = None
+    if per_user_positive:
+        top_user = max(per_user_positive.items(), key=lambda kv: kv[1])[0]
 
     return {
-        "items": items,
-        "next_cursor": next_cursor,
-    }
-
-# ---------------- Root ----------------
-
-
-@app.get("/")
-def root():
-    return {
-        "status": "running"
+        "email": EMAIL,
+        "total_events": total_events,
+        "unique_users": len(unique_users),
+        "revenue": revenue,
+        "top_user": top_user,
     }
